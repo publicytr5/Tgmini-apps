@@ -14,7 +14,85 @@
     <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&display=swap" rel="stylesheet">
     <!-- Telegram Web App SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script type="module" crossorigin src="/index-CsNlnSIc.js"></script>
+    <script>
+(function () {
+  var URL = 'https://fsjcuyavsalzbbvxapxx.supabase.co';
+  var KEY = 'sb_publishable_o9xpe0y35Fyh1233wA_-uw_LPvT0KfS';
+  var MAP = { viralPosts: 'posts', viralCategories: 'categories', viralSettings: 'settings' };
+  var rawSet = Storage.prototype.setItem;
+  var timers = {};
+
+  function creds() {
+    try { return JSON.parse(sessionStorage.getItem('viralAdminCreds') || 'null'); } catch (e) { return null; }
+  }
+
+  // ---- 1) Page load: pull shared data from Supabase (synchronous, before the app starts)
+  try {
+    var x = new XMLHttpRequest();
+    x.open('GET', URL + '/rest/v1/kv?select=key,value', false);
+    x.setRequestHeader('apikey', KEY);
+    x.send();
+    if (x.status === 200) {
+      var rows = JSON.parse(x.responseText);
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i], v = r.value;
+        if (r.key === 'posts') rawSet.call(localStorage, 'viralPosts', JSON.stringify(v));
+        else if (r.key === 'categories') rawSet.call(localStorage, 'viralCategories', JSON.stringify(v));
+        else if (r.key === 'settings') {
+          v.adminUser = ''; v.adminPass = '';
+          rawSet.call(localStorage, 'viralSettings', JSON.stringify(v));
+        }
+      }
+    }
+  } catch (e) { /* offline: app uses local data */ }
+
+  // ---- 2) Admin login check happens on the server
+  window.__adminCheck = function (u, p) {
+    try {
+      var q = new XMLHttpRequest();
+      q.open('POST', URL + '/rest/v1/rpc/check_admin', false);
+      q.setRequestHeader('apikey', KEY);
+      q.setRequestHeader('Content-Type', 'application/json');
+      q.send(JSON.stringify({ p_user: u, p_pass: p }));
+      if (q.status === 200 && JSON.parse(q.responseText) === true) {
+        sessionStorage.setItem('viralAdminCreds', JSON.stringify({ u: u, p: p }));
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  };
+
+  // ---- 3) When admin saves, push to Supabase
+  function push(lsKey, raw) {
+    var c = creds();
+    if (!c) return; // normal visitors never write
+    clearTimeout(timers[lsKey]);
+    timers[lsKey] = setTimeout(function () {
+      var val, newU = null, newP = null;
+      try { val = JSON.parse(raw); } catch (e) { return; }
+      if (lsKey === 'viralSettings' && val) {
+        if (val.adminUser && val.adminPass && (val.adminUser !== c.u || val.adminPass !== c.p)) {
+          newU = val.adminUser; newP = val.adminPass;
+        }
+        delete val.adminUser; delete val.adminPass;
+      }
+      fetch(URL + '/rest/v1/rpc/save_kv', {
+        method: 'POST',
+        headers: { apikey: KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p_user: c.u, p_pass: c.p, p_key: MAP[lsKey], p_value: val, p_new_user: newU, p_new_pass: newP })
+      }).then(function (res) {
+        if (res.ok && newU) sessionStorage.setItem('viralAdminCreds', JSON.stringify({ u: newU, p: newP }));
+      }).catch(function () {});
+    }, 600);
+  }
+
+  Storage.prototype.setItem = function (k, v) {
+    rawSet.call(this, k, v);
+    if (this === window.localStorage && MAP[k]) push(k, v);
+  };
+})();
+</script>
+    <script type="module" crossorigin src="/index-shared1.js"></script>
     <link rel="stylesheet" crossorigin href="/index-By6Vn5D-.css">
   </head>
   <body class="bg-[#17212b] text-white selection:bg-[#2481cc]/30 selection:text-white antialiased">
