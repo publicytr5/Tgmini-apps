@@ -26,25 +26,34 @@
     try { return JSON.parse(sessionStorage.getItem('viralAdminCreds') || 'null'); } catch (e) { return null; }
   }
 
-  // ---- 1) Page load: pull shared data from Supabase (synchronous, before the app starts)
-  try {
-    var x = new XMLHttpRequest();
-    x.open('GET', URL + '/rest/v1/kv?select=key,value', false);
-    x.setRequestHeader('apikey', KEY);
-    x.send();
-    if (x.status === 200) {
-      var rows = JSON.parse(x.responseText);
-      for (var i = 0; i < rows.length; i++) {
-        var r = rows[i], v = r.value;
-        if (r.key === 'posts') rawSet.call(localStorage, 'viralPosts', JSON.stringify(v));
-        else if (r.key === 'categories') rawSet.call(localStorage, 'viralCategories', JSON.stringify(v));
-        else if (r.key === 'settings') {
-          v.adminUser = ''; v.adminPass = '';
-          rawSet.call(localStorage, 'viralSettings', JSON.stringify(v));
-        }
+  // ---- 1) Page load: pull shared data from Supabase (max 3 seconds), then start the app
+  function start() {
+    if (window.__appStarted) return;
+    window.__appStarted = true;
+    var s = document.createElement('script');
+    s.type = 'module';
+    s.src = '/index-shared1.js';
+    document.head.appendChild(s);
+  }
+  function apply(rows) {
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i], v = r.value;
+      if (r.key === 'posts') rawSet.call(localStorage, 'viralPosts', JSON.stringify(v));
+      else if (r.key === 'categories') rawSet.call(localStorage, 'viralCategories', JSON.stringify(v));
+      else if (r.key === 'settings') {
+        v.adminUser = ''; v.adminPass = '';
+        rawSet.call(localStorage, 'viralSettings', JSON.stringify(v));
       }
     }
-  } catch (e) { /* offline: app uses local data */ }
+  }
+  var ctl = window.AbortController ? new AbortController() : null;
+  var tm = setTimeout(function () { if (ctl) ctl.abort(); start(); }, 3000);
+  try {
+    fetch(URL + '/rest/v1/kv?select=key,value', { headers: { apikey: KEY }, signal: ctl ? ctl.signal : undefined })
+      .then(function (res) { return res.ok ? res.json() : []; })
+      .then(function (rows) { clearTimeout(tm); try { apply(rows); } catch (e) {} start(); })
+      .catch(function () { clearTimeout(tm); start(); });
+  } catch (e) { clearTimeout(tm); start(); }
 
   // ---- 2) Admin login check happens on the server
   window.__adminCheck = function (u, p) {
@@ -92,7 +101,6 @@
   };
 })();
 </script>
-    <script type="module" crossorigin src="/index-shared1.js"></script>
     <link rel="stylesheet" crossorigin href="/index-By6Vn5D-.css">
   </head>
   <body class="bg-[#17212b] text-white selection:bg-[#2481cc]/30 selection:text-white antialiased">
