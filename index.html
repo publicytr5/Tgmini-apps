@@ -9,6 +9,8 @@
     <meta property="og:description" content="টেলিগ্রাম ভাইরাল ভিডিও মিনি অ্যাপ - ক্যাটাগরি, এড লকার ও এডমিন প্যানেল সহ প্রিমিয়াম প্ল্যাটফর্ম" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fsjcuyavsalzbbvxapxx.supabase.co" crossorigin>
+    <link rel="preconnect" href="https://i.ibb.co.com" crossorigin>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -16,30 +18,43 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
 (function () {
+  // ===== CONFIG: change only these two lines if the bot or Mini App short name changes =====
+  var BOT = 'yyttwubot';   // bot username, without @
+  var APP = '';              // Mini App short name set in BotFather (/newapp). Leave '' for a Main Mini App.
+  // =========================================================================================
   var URL = 'https://fsjcuyavsalzbbvxapxx.supabase.co';
   var KEY = 'sb_publishable_o9xpe0y35Fyh1233wA_-uw_LPvT0KfS';
   var MAP = { viralPosts: 'posts', viralCategories: 'categories', viralSettings: 'settings' };
   var rawSet = Storage.prototype.setItem;
   var timers = {};
+  var H = { apikey: KEY, 'Content-Type': 'application/json' };
 
   function creds() {
     try { return JSON.parse(sessionStorage.getItem('viralAdminCreds') || 'null'); } catch (e) { return null; }
   }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 
-  // ---- 1) Page load: pull shared data from Supabase (max 3 seconds), then start the app
+  // ---------- 1) Start the app: fetch shared data (short wait), then launch ----------
   function start() {
     if (window.__appStarted) return;
     window.__appStarted = true;
     var s = document.createElement('script');
     s.type = 'module';
-    s.src = '/index-shared1.js';
+    s.src = '/index-v2.js';
     document.head.appendChild(s);
   }
-  function apply(rows) {
+  function apply(rows, views) {
+    var vm = {};
+    for (var j = 0; j < views.length; j++) vm[String(views[j].post_id)] = views[j].views;
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i], v = r.value;
-      if (r.key === 'posts') rawSet.call(localStorage, 'viralPosts', JSON.stringify(v));
-      else if (r.key === 'categories') rawSet.call(localStorage, 'viralCategories', JSON.stringify(v));
+      if (r.key === 'posts' && Array.isArray(v)) {
+        for (var k = 0; k < v.length; k++) {
+          var pv = vm[String(v[k].id)];
+          if (pv !== undefined && pv !== null) v[k].views = Number(pv);
+        }
+        rawSet.call(localStorage, 'viralPosts', JSON.stringify(v));
+      } else if (r.key === 'categories') rawSet.call(localStorage, 'viralCategories', JSON.stringify(v));
       else if (r.key === 'settings') {
         v.adminUser = ''; v.adminPass = '';
         rawSet.call(localStorage, 'viralSettings', JSON.stringify(v));
@@ -47,15 +62,20 @@
     }
   }
   var ctl = window.AbortController ? new AbortController() : null;
-  var tm = setTimeout(function () { if (ctl) ctl.abort(); start(); }, 3000);
+  var wait = lsGet('viralPosts') ? 1800 : 3500;   // returning visitors start faster
+  var tm = setTimeout(function () { if (ctl) ctl.abort(); start(); }, wait);
+  function get(path) {
+    return fetch(URL + path, { headers: { apikey: KEY }, signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .catch(function () { return []; });
+  }
   try {
-    fetch(URL + '/rest/v1/kv?select=key,value', { headers: { apikey: KEY }, signal: ctl ? ctl.signal : undefined })
-      .then(function (res) { return res.ok ? res.json() : []; })
-      .then(function (rows) { clearTimeout(tm); try { apply(rows); } catch (e) {} start(); })
+    Promise.all([get('/rest/v1/kv?select=key,value'), get('/rest/v1/post_views?select=post_id,views')])
+      .then(function (res) { clearTimeout(tm); try { apply(res[0], res[1]); } catch (e) {} start(); })
       .catch(function () { clearTimeout(tm); start(); });
   } catch (e) { clearTimeout(tm); start(); }
 
-  // ---- 2) Admin login check happens on the server
+  // ---------- 2) Admin login is checked on the server ----------
   window.__adminCheck = function (u, p) {
     try {
       var q = new XMLHttpRequest();
@@ -71,38 +91,66 @@
     return false;
   };
 
-  // ---- 3) When admin saves, push to Supabase
+  // ---------- 3) Admin edits are saved to Supabase ----------
   function push(lsKey, raw) {
     var c = creds();
-    if (!c) return; // normal visitors never write
+    if (!c) return;
     clearTimeout(timers[lsKey]);
     timers[lsKey] = setTimeout(function () {
-      var val, newU = null, newP = null;
+      var val;
       try { val = JSON.parse(raw); } catch (e) { return; }
-      if (lsKey === 'viralSettings' && val) {
-        if (val.adminUser && val.adminPass && (val.adminUser !== c.u || val.adminPass !== c.p)) {
-          newU = val.adminUser; newP = val.adminPass;
-        }
-        delete val.adminUser; delete val.adminPass;
-      }
+      if (lsKey === 'viralSettings' && val) { delete val.adminUser; delete val.adminPass; }
       fetch(URL + '/rest/v1/rpc/save_kv', {
-        method: 'POST',
-        headers: { apikey: KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ p_user: c.u, p_pass: c.p, p_key: MAP[lsKey], p_value: val, p_new_user: newU, p_new_pass: newP })
-      }).then(function (res) {
-        if (res.ok && newU) sessionStorage.setItem('viralAdminCreds', JSON.stringify({ u: newU, p: newP }));
+        method: 'POST', headers: H,
+        body: JSON.stringify({ p_user: c.u, p_pass: c.p, p_key: MAP[lsKey], p_value: val })
       }).catch(function () {});
     }, 600);
   }
-
   Storage.prototype.setItem = function (k, v) {
     rawSet.call(this, k, v);
     if (this === window.localStorage && MAP[k]) push(k, v);
   };
+
+  // ---------- 4) Short share links + Telegram share picker ----------
+  function codeOf(p) { return typeof p.id === 'number' ? p.id.toString(36) : String(p.id); }
+  function linkOf(p) {
+    return 'https://t.me/' + BOT + (APP ? '/' + APP : '') + '?startapp=' + encodeURIComponent(codeOf(p));
+  }
+  window.__share = function (p, toast) {
+    var link = linkOf(p);
+    var text = '🔥 ভাইরাল ভিডিও: "' + p.title + '"\nটেলিগ্রাম মিনি অ্যাপে দেখুন!';
+    var share = 'https://t.me/share/url?url=' + encodeURIComponent(link) + '&text=' + encodeURIComponent(text);
+    try {
+      var tg = window.Telegram && window.Telegram.WebApp;
+      if (tg && tg.openTelegramLink) { tg.openTelegramLink(share); return; }
+    } catch (e) {}
+    try { window.open(share, '_blank'); return; } catch (e) {}
+    try { navigator.clipboard.writeText(text + '\n' + link); if (toast) toast('📋 লিংক কপি করা হয়েছে!'); } catch (e) {}
+  };
+  window.__startPost = function (posts) {
+    var sp = null;
+    try { sp = window.Telegram.WebApp.initDataUnsafe.start_param; } catch (e) {}
+    if (!sp) { try { sp = new URLSearchParams(location.search).get('tgWebAppStartParam') || new URLSearchParams(location.hash.slice(1)).get('tgWebAppStartParam'); } catch (e) {} }
+    if (!sp) return null;
+    for (var i = 0; i < posts.length; i++) if (codeOf(posts[i]) === sp || String(posts[i].id) === sp) return posts[i];
+    return null;
+  };
+
+  // ---------- 5) Global view counter (one count per device per post per 6 hours) ----------
+  window.__countView = function (p) {
+    try {
+      var seen = JSON.parse(lsGet('viralSeen') || '{}'), now = Date.now(), id = String(p.id);
+      if (seen[id] && now - seen[id] < 6 * 3600 * 1000) return;
+      seen[id] = now;
+      rawSet.call(localStorage, 'viralSeen', JSON.stringify(seen));
+      fetch(URL + '/rest/v1/rpc/bump_view', { method: 'POST', headers: H, body: JSON.stringify({ p_id: id, p_base: Number(p.views) || 0 }), keepalive: true }).catch(function () {});
+    } catch (e) {}
+  };
 })();
 </script>
     <link rel="stylesheet" crossorigin href="/index-By6Vn5D-.css">
-  </head>
+  <script async src="//libtl.com/sdk.js" data-zone="3537079" data-sdk="show_3537079"></script>
+</head>
   <body class="bg-[#17212b] text-white selection:bg-[#2481cc]/30 selection:text-white antialiased">
     <div id="root"></div>
   </body>
